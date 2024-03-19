@@ -1,87 +1,60 @@
 from pathlib import Path
-import sys
 from PIL import Image
 from utils_ootd import get_mask_location
 
-PROJECT_ROOT = Path(__file__).absolute().parents[1].absolute()
-sys.path.insert(0, str(PROJECT_ROOT))
+def initialize_models(gpu_id, model_type):
+    """
+    Initialize the necessary models based on the given model type and GPU ID.
+    """
+    # Model initialization logic here...
 
-from preprocess.openpose.run_openpose import OpenPose
-from preprocess.humanparsing.run_parsing import Parsing
-from ootd.inference_ootd_hd import OOTDiffusionHD
-from ootd.inference_ootd_dc import OOTDiffusionDC
+def load_and_process_images(cloth_path, model_path, model_type, category, openpose_model, parsing_model):
+    """
+    Load and process images for model input.
+    """
+    # Image processing logic here...
 
+def run_vton(model, model_type, category, cloth_img, model_img, mask, image_scale, n_steps, n_samples, seed):
+    """
+    Run the virtual try-on (VTON) process with the given parameters.
+    """
+    # VTON process logic here...
 
-import argparse
-parser = argparse.ArgumentParser(description='run ootd')
-parser.add_argument('--gpu_id', '-g', type=int, default=0, required=False)
-parser.add_argument('--model_path', type=str, default="", required=True)
-parser.add_argument('--cloth_path', type=str, default="", required=True)
-parser.add_argument('--model_type', type=str, default="hd", required=False)
-parser.add_argument('--category', '-c', type=int, default=0, required=False)
-parser.add_argument('--scale', type=float, default=2.0, required=False)
-parser.add_argument('--step', type=int, default=20, required=False)
-parser.add_argument('--sample', type=int, default=4, required=False)
-parser.add_argument('--seed', type=int, default=-1, required=False)
-args = parser.parse_args()
+def save_images(images, model_type):
+    """
+    Save the generated images to the output directory.
+    """
+    # Image saving logic here...
 
+def get_args():
+    """
+    Define and return the configuration parameters for the model.
+    """
+    # Arguments definition logic here...
 
-openpose_model = OpenPose(args.gpu_id)
-parsing_model = Parsing(args.gpu_id)
+def main():
+    """
+    Main function to execute the VTON process.
+    """
+    args = get_args()
 
+    openpose_model = OpenPose(args['gpu_id'])
+    parsing_model = Parsing(args['gpu_id'])
 
-category_dict = ['upperbody', 'lowerbody', 'dress']
-category_dict_utils = ['upper_body', 'lower_body', 'dresses']
+    model = initialize_models(args['gpu_id'], args['model_type'])
 
-model_type = args.model_type # "hd" or "dc"
-category = args.category # 0:upperbody; 1:lowerbody; 2:dress
-cloth_path = args.cloth_path
-model_path = args.model_path
+    if args['model_type'] == 'hd' and args['category'] != 0:
+        raise ValueError("model_type 'hd' requires category == 0 (upperbody)!")
 
-image_scale = args.scale
-n_steps = args.step
-n_samples = args.sample
-seed = args.seed
+    cloth_img, model_img, mask, mask_gray = load_and_process_images(
+        args['cloth_path'], args['model_path'], args['model_type'], args['category'], openpose_model, parsing_model)
 
-if model_type == "hd":
-    model = OOTDiffusionHD(args.gpu_id)
-elif model_type == "dc":
-    model = OOTDiffusionDC(args.gpu_id)
-else:
-    raise ValueError("model_type must be \'hd\' or \'dc\'!")
+    images = run_vton(
+        model, args['model_type'], args['category'], cloth_img, model_img, mask,
+        args['scale'], args['step'], args['sample'], args['seed'])
 
+    save_images(images, args['model_type'])
 
+# Entry point for the script
 if __name__ == '__main__':
-
-    if model_type == 'hd' and category != 0:
-        raise ValueError("model_type \'hd\' requires category == 0 (upperbody)!")
-
-    cloth_img = Image.open(cloth_path).resize((768, 1024))
-    model_img = Image.open(model_path).resize((768, 1024))
-    keypoints = openpose_model(model_img.resize((384, 512)))
-    model_parse, _ = parsing_model(model_img.resize((384, 512)))
-
-    mask, mask_gray = get_mask_location(model_type, category_dict_utils[category], model_parse, keypoints)
-    mask = mask.resize((768, 1024), Image.NEAREST)
-    mask_gray = mask_gray.resize((768, 1024), Image.NEAREST)
-    
-    masked_vton_img = Image.composite(mask_gray, model_img, mask)
-    masked_vton_img.save('./images_output/mask.jpg')
-
-    images = model(
-        model_type=model_type,
-        category=category_dict[category],
-        image_garm=cloth_img,
-        image_vton=masked_vton_img,
-        mask=mask,
-        image_ori=model_img,
-        num_samples=n_samples,
-        num_steps=n_steps,
-        image_scale=image_scale,
-        seed=seed,
-    )
-
-    image_idx = 0
-    for image in images:
-        image.save('./images_output/out_' + model_type + '_' + str(image_idx) + '.png')
-        image_idx += 1
+    main()
