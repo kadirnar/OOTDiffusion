@@ -1,60 +1,84 @@
+import os
 from pathlib import Path
+import sys
+import torch
 from PIL import Image
+
 from utils_ootd import get_mask_location
 
-def initialize_models(gpu_id, model_type):
-    """
-    Initialize the necessary models based on the given model type and GPU ID.
-    """
-    # Model initialization logic here...
+PROJECT_ROOT = Path(__file__).absolute().parents[1].absolute()
+sys.path.insert(0, str(PROJECT_ROOT))
 
-def load_and_process_images(cloth_path, model_path, model_type, category, openpose_model, parsing_model):
-    """
-    Load and process images for model input.
-    """
-    # Image processing logic here...
+import time
+from preprocess.openpose.run_openpose import OpenPose
+from preprocess.humanparsing.run_parsing import Parsing
+from ootd.inference_ootd_hd import OOTDiffusionHD
+from ootd.inference_ootd_dc import OOTDiffusionDC
 
-def run_vton(model, model_type, category, cloth_img, model_img, mask, image_scale, n_steps, n_samples, seed):
-    """
-    Run the virtual try-on (VTON) process with the given parameters.
-    """
-    # VTON process logic here...
 
-def save_images(images, model_type):
-    """
-    Save the generated images to the output directory.
-    """
-    # Image saving logic here...
+openpose_model_hd = OpenPose(0)
+parsing_model_hd = Parsing(0)
+ootd_model_hd = OOTDiffusionHD(0)
 
-def get_args():
-    """
-    Define and return the configuration parameters for the model.
-    """
-    # Arguments definition logic here...
+openpose_model_dc = OpenPose(1)
+parsing_model_dc = Parsing(1)
+ootd_model_dc = OOTDiffusionDC(1)
 
-def main():
-    """
-    Main function to execute the VTON process.
-    """
-    args = get_args()
 
-    openpose_model = OpenPose(args['gpu_id'])
-    parsing_model = Parsing(args['gpu_id'])
+category_dict = ['upperbody', 'lowerbody', 'dress']
+category_dict_utils = ['upper_body', 'lower_body', 'dresses']
 
-    model = initialize_models(args['gpu_id'], args['model_type'])
 
-    if args['model_type'] == 'hd' and args['category'] != 0:
-        raise ValueError("model_type 'hd' requires category == 0 (upperbody)!")
+example_path = os.path.join(os.path.dirname(__file__), 'examples')
+model_hd = os.path.join(example_path, 'model/model_1.png')
+garment_hd = os.path.join(example_path, 'garment/03244_00.jpg')
+model_dc = os.path.join(example_path, 'model/model_8.png')
+garment_dc = os.path.join(example_path, 'garment/048554_1.jpg')
 
-    cloth_img, model_img, mask, mask_gray = load_and_process_images(
-        args['cloth_path'], args['model_path'], args['model_type'], args['category'], openpose_model, parsing_model)
 
-    images = run_vton(
-        model, args['model_type'], args['category'], cloth_img, model_img, mask,
-        args['scale'], args['step'], args['sample'], args['seed'])
+def process_dc(vton_img, garm_img, category, n_samples, n_steps, image_scale, seed):
+    model_type = 'dc'
+    if category == 'Upper-body':
+        category = 0
+    elif category == 'Lower-body':
+        category = 1
+    else:
+        category =2
 
-    save_images(images, args['model_type'])
+    with torch.no_grad():
+        garm_img = Image.open(garm_img).resize((768, 1024))
+        vton_img = Image.open(vton_img).resize((768, 1024))
+        keypoints = openpose_model_dc(vton_img.resize((384, 512)))
+        model_parse, _ = parsing_model_dc(vton_img.resize((384, 512)))
 
-# Entry point for the script
-if __name__ == '__main__':
-    main()
+        mask, mask_gray = get_mask_location(model_type, category_dict_utils[category], model_parse, keypoints)
+        mask = mask.resize((768, 1024), Image.NEAREST)
+        mask_gray = mask_gray.resize((768, 1024), Image.NEAREST)
+        
+        masked_vton_img = Image.composite(mask_gray, vton_img, mask)
+
+        images = ootd_model_dc(
+            model_type=model_type,
+            category=category_dict[category],
+            image_garm=garm_img,
+            image_vton=masked_vton_img,
+            mask=mask,
+            image_ori=vton_img,
+            num_samples=n_samples,
+            num_steps=n_steps,
+            image_scale=image_scale,
+            seed=seed,
+        )
+
+    return images
+
+if __name__ == "__main__":
+    vton_img = "/opt/apps/oot_diffusion/data/modelv0.png"
+    garm_img = "/opt/apps/oot_diffusion/data/clothv0.jpg"
+    n_samples = 1
+    n_steps = 20
+    image_scale = 1.0
+    seed = 0
+
+    images = process_dc(vton_img, garm_img, 'Upper-body', n_samples, n_steps, image_scale, seed)
+    images[0].save('result_dc.png')
